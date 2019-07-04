@@ -13,7 +13,7 @@ use Kanboard\Event\GenericEvent;
 class WebhookHandler extends Base
 {
     /**
-     * Events
+     * Events - Issue
      *
      * @var string
      */
@@ -23,7 +23,18 @@ class WebhookHandler extends Base
     const EVENT_ISSUE_ASSIGNEE_CHANGE  = 'github.webhook.issue.assignee';
     const EVENT_ISSUE_LABEL_CHANGE     = 'github.webhook.issue.label';
     const EVENT_ISSUE_COMMENT          = 'github.webhook.issue.commented';
+    /**
+     * Event - Commit
+     */
     const EVENT_COMMIT                 = 'github.webhook.commit';
+    /**
+     * Events - Project Card
+     */
+    const EVENT_CARD_CREATED           = 'github.webhook.issue.created';
+    const EVENT_CARD_EDITED            = 'github.webhook.issue.edited';
+    const EVENT_CARD_MOVED             = 'github.webhook.issue.moved';
+    const EVENT_CARD_CONVERTED         = 'github.webhook.issue.converted';
+    const EVENT_CARD_DELETED           = 'github.webhook.issue.deleted';
 
     /**
      * Project id
@@ -61,6 +72,8 @@ class WebhookHandler extends Base
                 return $this->parseIssueEvent($payload);
             case 'issue_comment':
                 return $this->parseCommentIssueEvent($payload);
+            case 'project_card':
+                return $this->parseProjectCardEvent($payload);
         }
 
         return false;
@@ -381,6 +394,189 @@ class WebhookHandler extends Base
 
             $this->dispatcher->dispatch(
                 self::EVENT_ISSUE_LABEL_CHANGE,
+                new GenericEvent($event)
+            );
+
+            return true;
+        }
+
+        return false;
+    }
+
+    
+    /**
+     * Parse project card events
+     *
+     * @access public
+     * @param  array   $payload   Event data
+     * @return boolean
+     */
+    public function parseProjectCardEvent(array $payload)
+    {
+        if (empty($payload['action'])) {
+            return false;
+        }
+
+        switch ($payload['action']) {
+            case 'created':
+                return $this->handleProjectCardCreated($payload['project_card']);
+            case 'edited':
+                return $this->handleProjectCardEdited($payload['project_card']);
+            case 'moved':
+                return $this->handleProjectCardMoved($payload['project_card'],$payload['action']);
+            case 'converted':
+                return $this->handleProjectCardConverted($payload['project_card'],$payload['action']);
+            case 'deleted':
+                return $this->handleProjectCardDeleted($payload['project_card'],$payload['action']);
+        }
+
+        return false;
+    }
+    
+
+    /**
+     * Handle new project card
+     *
+     * @access public
+     * @param  array    $project_card   project card data
+     * @return boolean
+     */
+    public function handleProjectCardCreated(array $project_card)
+    {
+        $event = array(
+            'project_id' => $this->project_id,
+            'reference' => $project_card['id'],
+            'title' => substr($project_card['note'],0,30),
+            'description' => $project_card['note']."\n\n[".t('Github Project Card').']('.$project_card['url'].')',
+        );
+
+        $this->dispatcher->dispatch(
+            self::EVENT_CARD_CREATED,
+            new GenericEvent($event)
+        );
+
+        return true;
+    }
+	
+	
+    /**
+     * Handle project card deletion
+     *
+     * @access public
+     * @param  array    $project_card   project card data
+     * @return boolean
+     */
+    public function handleProjectCardDeleted(array $project_card)
+    {
+        $task = $this->taskFinderModel->getByReference($this->project_id, $project_card['id']);
+
+        if (! empty($task)) {
+            $event = array(
+                'project_id' => $this->project_id,
+                'task_id' => $task['id'],
+                'reference' => $project_card['id'],
+            );
+
+            $this->dispatcher->dispatch(
+                self::EVENT_CARD_DELETED,
+                new GenericEvent($event)
+            );
+
+            return true;
+        }
+
+        return false;
+    }
+	
+	
+    /**
+     * Handle project card converted to an issue
+     *
+     * @access public
+     * @param  array    $project_card   project card data
+     * @param  string    $action   project card action
+     * @return boolean
+     */
+    public function handleProjectCardConverted(array $project_card, $action)
+    {
+        return commentOnProjectCard($project_card, $action);
+    }
+	
+	
+    /**
+     * Handle project card edited
+     *
+     * @access public
+     * @param  array    $project_card   project card data
+     * @param  string    $action   project card action
+     * @return boolean
+     */
+    public function handleProjectCardEdited(array $project_card, $action)
+    {
+        return commentOnProjectCard($project_card, $action);
+    }
+	
+	
+    /**
+     * Handle project card moved to another column
+     *
+     * @access public
+     * @param  array    $project_card   project card data
+     * @param  string    $action   project card action
+     * @return boolean
+     */
+    public function handleProjectCardMoved(array $project_card, $action)
+    {
+        return commentOnProjectCard($project_card, $action);
+    }
+
+
+    /**
+     * Comment on project card
+     *
+     * @access public
+     * @param  array   $project_card   Event data
+     * @param  string    $action   project card action
+     * @return boolean
+     */
+    public function commentOnProjectCard(array $project_card, $action)
+    {
+        $task = $this->taskFinderModel->getByReference($this->project_id, $project_card['id']);
+
+        if (! empty($task)) {
+            $user = $this->userModel->getByUsername($project_card['creator']['login']);
+
+            if (! empty($user) && ! $this->projectPermissionModel->isAssignable($this->project_id, $user['id'])) {
+                $user = array();
+            }
+            
+            $comment = '';
+            $eventConstant = '';
+            switch ($action) {
+                case 'converted':
+                    $comment = "This card has been converted to an issue. ".$project_card['note']."\n\n[".t('By @%s on Github', $project_card['creator']['login']).']('.$project_card['url'].')';
+                    $eventConstant = self::EVENT_CARD_CONVERTED;
+                    break;
+                case 'edited':
+                    $comment = "[EDIT]".$project_card['note']."\n\n[".t('By @%s on Github', $project_card['creator']['login']).']('.$project_card['url'].')';
+                    $eventConstant = self::EVENT_CARD_EDITED;
+                    break;
+                case 'moved':
+                    $comment = "This card has been moved to another column. ".$project_card['note']."\n\n[".t('By @%s on Github', $project_card['creator']['login']).']('.$project_card['url'].')';
+                    $eventConstant = self::EVENT_CARD_MOVED;
+                    break;
+            }
+
+            $event = array(
+                'project_id' => $this->project_id,
+                'reference' => $project_card['id'],
+                'comment' => $comment,
+                'user_id' => ! empty($user) ? $user['id'] : 0,
+                'task_id' => $task['id'],
+            );
+
+            $this->dispatcher->dispatch(
+                $eventConstant,
                 new GenericEvent($event)
             );
 
