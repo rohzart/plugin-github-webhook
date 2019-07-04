@@ -43,6 +43,12 @@ When an event occurs on Github, an action can be performed on Kanboard.
 - Github issue assignee change
 - Github issue label change
 - Github issue comment created
+(new)
+- Github project card created
+- Github project card deleted
+- Github project card moved
+- Github project card converted to an issue
+- Github project card edited
 
 ### List of available actions
 

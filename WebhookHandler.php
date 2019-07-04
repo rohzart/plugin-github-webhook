@@ -86,6 +86,7 @@ class WebhookHandler extends Base
      * @param  array   $payload   Event data
      * @return boolean
      */
+    // ToDo: Modify commit event to include project card
     public function parsePushEvent(array $payload)
     {
         if (empty($payload['commits'])) {
@@ -499,6 +500,7 @@ class WebhookHandler extends Base
      */
     public function handleProjectCardConverted(array $project_card, $action)
     {
+        // ToDo: Comment and then close card cause another card will be created (from the newly created issue).
         return commentOnProjectCard($project_card, $action);
     }
 	
@@ -541,6 +543,7 @@ class WebhookHandler extends Base
      */
     public function commentOnProjectCard(array $project_card, $action)
     {
+        // ToDo: this function is not working. Needs fixing.
         $task = $this->taskFinderModel->getByReference($this->project_id, $project_card['id']);
 
         if (! empty($task)) {
